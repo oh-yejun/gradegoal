@@ -9,24 +9,13 @@ import {
 } from "react";
 
 import type { User } from "@supabase/supabase-js";
-
 import { supabase } from "../lib/supabase";
 
-type AssessmentType =
-  | "written"
-  | "performance";
-
-type ViewMode =
-  | "dashboard"
-  | "editor";
-
-type SemesterCreateMode =
-  | "new"
-  | "copy";
-
-type AuthMode =
-  | "signin"
-  | "signup";
+type AssessmentType = "written" | "performance";
+type ViewMode = "dashboard" | "editor";
+type SemesterCreateMode = "new" | "copy";
+type AuthMode = "signin" | "signup";
+type OnboardingMode = "first" | "edit";
 
 type SyncStatus =
   | "local"
@@ -35,11 +24,23 @@ type SyncStatus =
   | "synced"
   | "error";
 
+type AssessmentPresetId =
+  | "standard"
+  | "written70"
+  | "performance50"
+  | "writtenOnly";
+
+type QuickAssessmentType =
+  | "midterm"
+  | "final"
+  | "performance"
+  | "other";
+
 type Assessment = {
   id: number;
   name: string;
   type: AssessmentType;
-  score: number;
+  score: number | null;
   maxScore: number;
   weight: number;
 };
@@ -59,10 +60,11 @@ type Semester = {
 };
 
 type CloudPayload = {
-  version: 1;
+  version: number;
   semesters: Semester[];
   currentSemesterId: string;
   currentSubjectId: string;
+  onboardingCompleted?: boolean;
 };
 
 type Result =
@@ -106,20 +108,32 @@ type SubjectAnalysis =
       message: string;
     };
 
-const STORAGE_KEY =
-  "gradegoal-data-v5";
+type AssessmentPreset = {
+  id: AssessmentPresetId;
+  name: string;
+  description: string;
+  targetIndex: number;
+  items: Array<{
+    name: string;
+    type: AssessmentType;
+    maxScore: number;
+    weight: number;
+  }>;
+};
+
+const STORAGE_KEY = "gradegoal-data-v7";
 
 const OLD_STORAGE_KEYS = [
+  "gradegoal-data-v6",
+  "gradegoal-data-v5",
   "gradegoal-data-v4",
   "gradegoal-data-v3",
   "gradegoal-data-v2",
 ];
 
-const OLD_V1 =
-  "gradegoal-data-v1";
+const OLD_V1 = "gradegoal-data-v1";
 
-const CUSTOM_VALUE =
-  "__custom__";
+const CUSTOM_VALUE = "__custom__";
 
 const SEMESTER_PRESETS = [
   "1학년 1학기",
@@ -225,47 +239,154 @@ const SUBJECT_GROUPS = [
   },
 ];
 
+const ASSESSMENT_PRESETS: AssessmentPreset[] = [
+  {
+    id: "standard",
+    name: "기본형",
+    description:
+      "중간 30% + 수행 40% + 기말 30%",
+    targetIndex: 2,
+    items: [
+      {
+        name: "중간고사",
+        type: "written",
+        maxScore: 100,
+        weight: 30,
+      },
+      {
+        name: "수행평가",
+        type: "performance",
+        maxScore: 100,
+        weight: 40,
+      },
+      {
+        name: "기말고사",
+        type: "written",
+        maxScore: 100,
+        weight: 30,
+      },
+    ],
+  },
+  {
+    id: "written70",
+    name: "지필 70형",
+    description:
+      "중간 35% + 수행 30% + 기말 35%",
+    targetIndex: 2,
+    items: [
+      {
+        name: "중간고사",
+        type: "written",
+        maxScore: 100,
+        weight: 35,
+      },
+      {
+        name: "수행평가",
+        type: "performance",
+        maxScore: 100,
+        weight: 30,
+      },
+      {
+        name: "기말고사",
+        type: "written",
+        maxScore: 100,
+        weight: 35,
+      },
+    ],
+  },
+  {
+    id: "performance50",
+    name: "수행 50형",
+    description:
+      "중간 25% + 수행 50% + 기말 25%",
+    targetIndex: 2,
+    items: [
+      {
+        name: "중간고사",
+        type: "written",
+        maxScore: 100,
+        weight: 25,
+      },
+      {
+        name: "수행평가",
+        type: "performance",
+        maxScore: 100,
+        weight: 50,
+      },
+      {
+        name: "기말고사",
+        type: "written",
+        maxScore: 100,
+        weight: 25,
+      },
+    ],
+  },
+  {
+    id: "writtenOnly",
+    name: "지필 중심형",
+    description:
+      "중간 50% + 기말 50%",
+    targetIndex: 1,
+    items: [
+      {
+        name: "중간고사",
+        type: "written",
+        maxScore: 100,
+        weight: 50,
+      },
+      {
+        name: "기말고사",
+        type: "written",
+        maxScore: 100,
+        weight: 50,
+      },
+    ],
+  },
+];
+
 function createId() {
   return `${Date.now()}-${Math.random()
     .toString(36)
     .slice(2)}`;
 }
 
-function createSubject(
-  name: string
-): Subject {
+function createAssessmentsFromPreset(
+  presetId: AssessmentPresetId
+) {
+  const preset =
+    ASSESSMENT_PRESETS.find(
+      (item) => item.id === presetId
+    ) ?? ASSESSMENT_PRESETS[0];
+
+  const assessments: Assessment[] =
+    preset.items.map((item, index) => ({
+      id: index + 1,
+      name: item.name,
+      type: item.type,
+      score: null,
+      maxScore: item.maxScore,
+      weight: item.weight,
+    }));
+
+  return {
+    assessments,
+    targetAssessmentId:
+      assessments[preset.targetIndex].id,
+  };
+}
+
+function createSubject(name: string): Subject {
+  const preset =
+    createAssessmentsFromPreset("standard");
+
   return {
     id: createId(),
     name,
     targetFinalScore: 90,
-    targetAssessmentId: 3,
-
-    assessments: [
-      {
-        id: 1,
-        name: "중간고사",
-        type: "written",
-        score: 87,
-        maxScore: 100,
-        weight: 30,
-      },
-      {
-        id: 2,
-        name: "수행평가",
-        type: "performance",
-        score: 38,
-        maxScore: 40,
-        weight: 40,
-      },
-      {
-        id: 3,
-        name: "기말고사",
-        type: "written",
-        score: 0,
-        maxScore: 100,
-        weight: 30,
-      },
-    ],
+    targetAssessmentId:
+      preset.targetAssessmentId,
+    assessments:
+      preset.assessments,
   };
 }
 
@@ -282,27 +403,103 @@ function createSemester(
   };
 }
 
-function cloneSubjectTemplate(
-  subject: Subject
-): Subject {
+function cloneSubjectTemplate(subject: Subject): Subject {
   return {
     id: createId(),
-
     name: subject.name,
-
     targetFinalScore:
       subject.targetFinalScore,
-
     targetAssessmentId:
       subject.targetAssessmentId,
-
     assessments:
       subject.assessments.map(
         (assessment) => ({
           ...assessment,
-          score: 0,
+          score: null,
         })
       ),
+  };
+}
+
+function normalizeAssessment(
+  assessment: Assessment
+): Assessment {
+  return {
+    ...assessment,
+    score:
+      typeof assessment.score === "number"
+        ? assessment.score
+        : null,
+  };
+}
+
+function normalizeSubject(subject: Subject): Subject {
+  return {
+    ...subject,
+    assessments:
+      Array.isArray(subject.assessments)
+        ? subject.assessments.map(
+            normalizeAssessment
+          )
+        : [],
+  };
+}
+
+function normalizeSemester(semester: Semester): Semester {
+  return {
+    ...semester,
+    subjects:
+      Array.isArray(semester.subjects)
+        ? semester.subjects.map(
+            normalizeSubject
+          )
+        : [],
+  };
+}
+
+function normalizePayload(payload: CloudPayload) {
+  if (
+    !payload ||
+    !Array.isArray(payload.semesters) ||
+    payload.semesters.length === 0
+  ) {
+    return null;
+  }
+
+  const semesters =
+    payload.semesters
+      .map(normalizeSemester)
+      .filter(
+        (semester) =>
+          semester.subjects.length > 0
+      );
+
+  if (semesters.length === 0) {
+    return null;
+  }
+
+  const semester =
+    semesters.find(
+      (item) =>
+        item.id ===
+        payload.currentSemesterId
+    ) ?? semesters[0];
+
+  const subject =
+    semester.subjects.find(
+      (item) =>
+        item.id ===
+        payload.currentSubjectId
+    ) ?? semester.subjects[0];
+
+  return {
+    semesters,
+    currentSemesterId:
+      semester.id,
+    currentSubjectId:
+      subject.id,
+    onboardingCompleted:
+      payload.onboardingCompleted ?? true,
   };
 }
 
@@ -386,17 +583,26 @@ function analyzeSubject(
 
     if (
       item.id !==
-        subject.targetAssessmentId &&
-      (
+      subject.targetAssessmentId
+    ) {
+      if (item.score === null) {
+        return {
+          status: "invalid",
+          message:
+            `${item.name} 점수 미입력`,
+        };
+      }
+
+      if (
         item.score < 0 ||
         item.score > item.maxScore
-      )
-    ) {
-      return {
-        status: "invalid",
-        message:
-          `${item.name} 점수 오류`,
-      };
+      ) {
+        return {
+          status: "invalid",
+          message:
+            `${item.name} 점수 오류`,
+        };
+      }
     }
   }
 
@@ -408,30 +614,31 @@ function analyzeSubject(
           subject.targetAssessmentId
       )
       .reduce(
-        (sum, item) =>
-          sum +
-          (
-            item.score /
-            item.maxScore
-          ) *
-            item.weight,
+        (sum, item) => {
+          const score =
+            item.score ?? 0;
+
+          return (
+            sum +
+            (score /
+              item.maxScore) *
+              item.weight
+          );
+        },
         0
       );
 
   const requiredScore =
-    (
-      (
-        subject.targetFinalScore -
-        completed
-      ) /
-      target.weight
-    ) *
+    ((subject.targetFinalScore -
+      completed) /
+      target.weight) *
     target.maxScore;
 
   if (requiredScore <= 0) {
     return {
       status: "already",
-      targetName: target.name,
+      targetName:
+        target.name,
     };
   }
 
@@ -442,8 +649,10 @@ function analyzeSubject(
     return {
       status: "impossible",
       requiredScore,
-      targetName: target.name,
-      targetMax: target.maxScore,
+      targetName:
+        target.name,
+      targetMax:
+        target.maxScore,
     };
   }
 
@@ -452,59 +661,15 @@ function analyzeSubject(
     requiredScore,
 
     requiredPercent:
-      (
-        requiredScore /
-        target.maxScore
-      ) *
+      (requiredScore /
+        target.maxScore) *
       100,
 
-    targetName: target.name,
-    targetMax: target.maxScore,
-  };
-}
+    targetName:
+      target.name,
 
-function normalizePayload(
-  payload: CloudPayload
-) {
-  if (
-    !payload ||
-    !Array.isArray(
-      payload.semesters
-    ) ||
-    payload.semesters.length === 0
-  ) {
-    return null;
-  }
-
-  const semester =
-    payload.semesters.find(
-      (item) =>
-        item.id ===
-        payload.currentSemesterId
-    ) ??
-    payload.semesters[0];
-
-  if (
-    !semester.subjects ||
-    semester.subjects.length === 0
-  ) {
-    return null;
-  }
-
-  const subject =
-    semester.subjects.find(
-      (item) =>
-        item.id ===
-        payload.currentSubjectId
-    ) ??
-    semester.subjects[0];
-
-  return {
-    semesters: payload.semesters,
-    currentSemesterId:
-      semester.id,
-    currentSubjectId:
-      subject.id,
+    targetMax:
+      target.maxScore,
   };
 }
 
@@ -529,7 +694,8 @@ export default function Home() {
   const [
     semesters,
     setSemesters,
-  ] = useState<Semester[]>([]);
+  ] =
+    useState<Semester[]>([]);
 
   const [
     currentSemesterId,
@@ -566,7 +732,59 @@ export default function Home() {
   ] = useState(false);
 
   /*
-   * 로그인 관련
+   * 온보딩
+   */
+  const [
+    onboardingCompleted,
+    setOnboardingCompleted,
+  ] = useState(false);
+
+  const [
+    onboardingOpen,
+    setOnboardingOpen,
+  ] = useState(false);
+
+  const [
+    onboardingMode,
+    setOnboardingMode,
+  ] =
+    useState<OnboardingMode>(
+      "first"
+    );
+
+  const [
+    onboardingStep,
+    setOnboardingStep,
+  ] = useState(1);
+
+  const [
+    onboardingSemesterChoice,
+    setOnboardingSemesterChoice,
+  ] = useState(
+    "1학년 1학기"
+  );
+
+  const [
+    onboardingCustomSemester,
+    setOnboardingCustomSemester,
+  ] = useState("");
+
+  const [
+    onboardingSubjects,
+    setOnboardingSubjects,
+  ] = useState<string[]>([
+    "국어",
+    "수학",
+    "영어",
+  ]);
+
+  const [
+    onboardingCustomSubject,
+    setOnboardingCustomSubject,
+  ] = useState("");
+
+  /*
+   * 로그인
    */
   const [
     user,
@@ -615,7 +833,7 @@ export default function Home() {
   ] = useState("");
 
   /*
-   * 클라우드 관련
+   * 클라우드
    */
   const [
     cloudReady,
@@ -702,7 +920,18 @@ export default function Home() {
   ] = useState("");
 
   /*
-   * 기존 로컬 데이터 불러오기
+   * 평가 빠른 설정
+   */
+  const [
+    assessmentPresetChoice,
+    setAssessmentPresetChoice,
+  ] =
+    useState<AssessmentPresetId>(
+      "standard"
+    );
+
+  /*
+   * 로컬 데이터 로드
    */
   useEffect(() => {
     try {
@@ -715,7 +944,9 @@ export default function Home() {
         const key of keys
       ) {
         const saved =
-          localStorage.getItem(key);
+          localStorage.getItem(
+            key
+          );
 
         if (!saved) {
           continue;
@@ -733,7 +964,9 @@ export default function Home() {
         ) {
           const normalized =
             normalizePayload({
-              version: 1,
+              version:
+                parsed.version ??
+                1,
 
               semesters:
                 parsed.semesters,
@@ -743,6 +976,9 @@ export default function Home() {
 
               currentSubjectId:
                 parsed.currentSubjectId,
+
+              onboardingCompleted:
+                parsed.onboardingCompleted,
             });
 
           if (normalized) {
@@ -762,15 +998,17 @@ export default function Home() {
               normalized.currentSemesterId
             );
 
+            setOnboardingCompleted(
+              normalized.onboardingCompleted
+            );
+
             setHydrated(true);
+
             return;
           }
         }
       }
 
-      /*
-       * 아주 이전 v1 데이터
-       */
       const oldV1 =
         localStorage.getItem(
           OLD_V1
@@ -795,7 +1033,9 @@ export default function Home() {
                 "1학년 1학기",
 
               subjects:
-                old.subjects,
+                old.subjects.map(
+                  normalizeSubject
+                ),
             };
 
           const subject =
@@ -822,7 +1062,12 @@ export default function Home() {
             semester.id
           );
 
+          setOnboardingCompleted(
+            true
+          );
+
           setHydrated(true);
+
           return;
         }
       }
@@ -833,9 +1078,6 @@ export default function Home() {
       );
     }
 
-    /*
-     * 신규 사용자
-     */
     const initial =
       createSemester(
         "1학년 1학기",
@@ -858,11 +1100,25 @@ export default function Home() {
       initial.id
     );
 
-    setHydrated(true);
+    setOnboardingCompleted(
+      false
+    );
+
+    setOnboardingMode(
+      "first"
+    );
+
+    setOnboardingOpen(
+      true
+    );
+
+    setHydrated(
+      true
+    );
   }, []);
 
   /*
-   * Supabase 로그인 상태 확인
+   * 로그인 상태
    */
   useEffect(() => {
     let mounted = true;
@@ -928,7 +1184,7 @@ export default function Home() {
   }, []);
 
   /*
-   * 현재 상태를 Ref에 저장
+   * Snapshot
    */
   useEffect(() => {
     if (!hydrated) {
@@ -937,20 +1193,22 @@ export default function Home() {
 
     localSnapshotRef.current =
       {
-        version: 1,
+        version: 3,
         semesters,
         currentSemesterId,
         currentSubjectId,
+        onboardingCompleted,
       };
   }, [
     semesters,
     currentSemesterId,
     currentSubjectId,
+    onboardingCompleted,
     hydrated,
   ]);
 
   /*
-   * LocalStorage 자동 저장
+   * LocalStorage 저장
    */
   useEffect(() => {
     if (
@@ -962,20 +1220,24 @@ export default function Home() {
 
     const payload: CloudPayload =
       {
-        version: 1,
+        version: 3,
         semesters,
         currentSemesterId,
         currentSubjectId,
+        onboardingCompleted,
       };
 
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify(payload)
+      JSON.stringify(
+        payload
+      )
     );
   }, [
     semesters,
     currentSemesterId,
     currentSubjectId,
+    onboardingCompleted,
     hydrated,
   ]);
 
@@ -983,8 +1245,7 @@ export default function Home() {
     user?.id ?? null;
 
   /*
-   * 로그인했을 때
-   * 클라우드 최초 동기화
+   * 최초 클라우드 동기화
    */
   useEffect(() => {
     if (
@@ -1009,7 +1270,9 @@ export default function Home() {
       false;
 
     async function initialCloudSync() {
-      setCloudReady(false);
+      setCloudReady(
+        false
+      );
 
       setSyncStatus(
         "syncing"
@@ -1023,9 +1286,7 @@ export default function Home() {
           .from(
             "gradegoal_data"
           )
-          .select(
-            "data"
-          )
+          .select("data")
           .eq(
             "user_id",
             userId
@@ -1051,18 +1312,12 @@ export default function Home() {
         return;
       }
 
-      /*
-       * 클라우드 데이터 존재
-       */
       if (
         data?.data
       ) {
-        const cloudData =
-          data.data as CloudPayload;
-
         const normalized =
           normalizePayload(
-            cloudData
+            data.data as CloudPayload
           );
 
         if (normalized) {
@@ -1082,7 +1337,25 @@ export default function Home() {
             normalized.currentSemesterId
           );
 
-          setCloudReady(true);
+          setOnboardingCompleted(
+            normalized.onboardingCompleted
+          );
+
+          if (
+            !normalized.onboardingCompleted
+          ) {
+            setOnboardingMode(
+              "first"
+            );
+
+            setOnboardingOpen(
+              true
+            );
+          }
+
+          setCloudReady(
+            true
+          );
 
           setSyncStatus(
             "synced"
@@ -1092,10 +1365,6 @@ export default function Home() {
         }
       }
 
-      /*
-       * 클라우드에 아무것도 없다면
-       * 현재 기기 데이터를 최초 업로드
-       */
       const local =
         localSnapshotRef.current;
 
@@ -1103,11 +1372,13 @@ export default function Home() {
         setSyncStatus(
           "error"
         );
+
         return;
       }
 
       const {
-        error: uploadError,
+        error:
+          uploadError,
       } =
         await supabase
           .from(
@@ -1118,7 +1389,8 @@ export default function Home() {
               user_id:
                 userId,
 
-              data: local,
+              data:
+                local,
             },
             {
               onConflict:
@@ -1145,7 +1417,9 @@ export default function Home() {
         return;
       }
 
-      setCloudReady(true);
+      setCloudReady(
+        true
+      );
 
       setSyncStatus(
         "synced"
@@ -1164,7 +1438,6 @@ export default function Home() {
   ]);
 
   /*
-   * 로그인 후 변경사항
    * 클라우드 자동 저장
    */
   useEffect(() => {
@@ -1186,10 +1459,11 @@ export default function Home() {
         async () => {
           const payload: CloudPayload =
             {
-              version: 1,
+              version: 3,
               semesters,
               currentSemesterId,
               currentSubjectId,
+              onboardingCompleted,
             };
 
           const {
@@ -1241,178 +1515,15 @@ export default function Home() {
     semesters,
     currentSemesterId,
     currentSubjectId,
+    onboardingCompleted,
     hydrated,
     cloudReady,
     userId,
   ]);
 
   /*
-   * 회원가입 / 로그인
+   * 현재 학기 / 과목
    */
-  async function handleAuth(
-    event: FormEvent
-  ) {
-    event.preventDefault();
-
-    setAuthMessage("");
-
-    const cleanEmail =
-      email.trim();
-
-    if (!cleanEmail) {
-      setAuthMessage(
-        "이메일을 입력해주세요."
-      );
-      return;
-    }
-
-    if (
-      password.length < 6
-    ) {
-      setAuthMessage(
-        "비밀번호는 최소 6자 이상 입력해주세요."
-      );
-      return;
-    }
-
-    setAuthBusy(true);
-
-    try {
-      if (
-        authMode ===
-        "signup"
-      ) {
-        const {
-          data,
-          error,
-        } =
-          await supabase.auth.signUp(
-            {
-              email:
-                cleanEmail,
-              password,
-            }
-          );
-
-        if (error) {
-          setAuthMessage(
-            error.message
-          );
-          return;
-        }
-
-        if (
-          data.session
-        ) {
-          setAuthMessage(
-            "회원가입과 로그인이 완료되었습니다."
-          );
-
-          setShowAuth(
-            false
-          );
-        } else {
-          setAuthMessage(
-            "회원가입이 완료되었습니다. 이메일로 전송된 인증 링크를 눌러주세요."
-          );
-        }
-      } else {
-        const {
-          error,
-        } =
-          await supabase.auth.signInWithPassword(
-            {
-              email:
-                cleanEmail,
-
-              password,
-            }
-          );
-
-        if (error) {
-          setAuthMessage(
-            "이메일 또는 비밀번호를 확인해주세요."
-          );
-
-          return;
-        }
-
-        setPassword("");
-
-        setShowAuth(
-          false
-        );
-      }
-    } finally {
-      setAuthBusy(false);
-    }
-  }
-
-  /*
-   * 로그아웃
-   */
-  async function handleSignOut() {
-    setCloudReady(false);
-
-    const {
-      error,
-    } =
-      await supabase.auth.signOut();
-
-    if (error) {
-      alert(
-        "로그아웃 중 오류가 발생했습니다."
-      );
-
-      return;
-    }
-
-    /*
-     * 공유 기기에서 다른 사람이
-     * 이전 계정 데이터를 보는 것을 방지
-     */
-    clearLocalGradeGoalData();
-
-    const initial =
-      createSemester(
-        "1학년 1학기",
-        "수학"
-      );
-
-    setSemesters([
-      initial,
-    ]);
-
-    setCurrentSemesterId(
-      initial.id
-    );
-
-    setCurrentSubjectId(
-      initial.subjects[0].id
-    );
-
-    setSemesterCopySourceId(
-      initial.id
-    );
-
-    setResult(null);
-
-    setPreviewScore(
-      90
-    );
-
-    setViewMode(
-      "dashboard"
-    );
-
-    setSyncStatus(
-      "local"
-    );
-
-    loadedUserRef.current =
-      null;
-  }
-
   const currentSemester =
     semesters.find(
       (semester) =>
@@ -1422,8 +1533,7 @@ export default function Home() {
     semesters[0];
 
   const subjects =
-    currentSemester
-      ?.subjects ??
+    currentSemester?.subjects ??
     [];
 
   const currentSubject =
@@ -1435,18 +1545,15 @@ export default function Home() {
     subjects[0];
 
   const assessments =
-    currentSubject
-      ?.assessments ??
+    currentSubject?.assessments ??
     [];
 
   const targetFinalScore =
-    currentSubject
-      ?.targetFinalScore ??
+    currentSubject?.targetFinalScore ??
     90;
 
   const targetAssessmentId =
-    currentSubject
-      ?.targetAssessmentId ??
+    currentSubject?.targetAssessmentId ??
     0;
 
   const targetAssessment =
@@ -1469,7 +1576,6 @@ export default function Home() {
         subjects.map(
           (subject) => ({
             subject,
-
             analysis:
               analyzeSubject(
                 subject
@@ -1524,6 +1630,499 @@ export default function Home() {
         subjects.length
       : 0;
 
+  /*
+   * Auth
+   */
+  async function handleAuth(
+    event: FormEvent
+  ) {
+    event.preventDefault();
+
+    setAuthMessage("");
+
+    const cleanEmail =
+      email.trim();
+
+    if (!cleanEmail) {
+      setAuthMessage(
+        "이메일을 입력해주세요."
+      );
+
+      return;
+    }
+
+    if (
+      password.length < 6
+    ) {
+      setAuthMessage(
+        "비밀번호는 최소 6자 이상 입력해주세요."
+      );
+
+      return;
+    }
+
+    setAuthBusy(
+      true
+    );
+
+    try {
+      if (
+        authMode ===
+        "signup"
+      ) {
+        const {
+          data,
+          error,
+        } =
+          await supabase.auth.signUp(
+            {
+              email:
+                cleanEmail,
+              password,
+            }
+          );
+
+        if (error) {
+          setAuthMessage(
+            error.message
+          );
+
+          return;
+        }
+
+        if (
+          data.session
+        ) {
+          setAuthMessage(
+            "회원가입과 로그인이 완료되었습니다."
+          );
+
+          setShowAuth(
+            false
+          );
+        } else {
+          setAuthMessage(
+            "회원가입이 완료되었습니다. 이메일 인증 링크를 확인해주세요."
+          );
+        }
+      } else {
+        const {
+          error,
+        } =
+          await supabase.auth.signInWithPassword(
+            {
+              email:
+                cleanEmail,
+              password,
+            }
+          );
+
+        if (error) {
+          setAuthMessage(
+            "이메일 또는 비밀번호를 확인해주세요."
+          );
+
+          return;
+        }
+
+        setPassword("");
+
+        setShowAuth(
+          false
+        );
+      }
+    } finally {
+      setAuthBusy(
+        false
+      );
+    }
+  }
+
+  async function handleSignOut() {
+    setCloudReady(
+      false
+    );
+
+    const {
+      error,
+    } =
+      await supabase.auth.signOut();
+
+    if (error) {
+      alert(
+        "로그아웃 중 오류가 발생했습니다."
+      );
+
+      return;
+    }
+
+    clearLocalGradeGoalData();
+
+    const initial =
+      createSemester(
+        "1학년 1학기",
+        "수학"
+      );
+
+    setSemesters([
+      initial,
+    ]);
+
+    setCurrentSemesterId(
+      initial.id
+    );
+
+    setCurrentSubjectId(
+      initial.subjects[0].id
+    );
+
+    setSemesterCopySourceId(
+      initial.id
+    );
+
+    setOnboardingCompleted(
+      false
+    );
+
+    setOnboardingMode(
+      "first"
+    );
+
+    setOnboardingStep(
+      1
+    );
+
+    setOnboardingSubjects([
+      "국어",
+      "수학",
+      "영어",
+    ]);
+
+    setOnboardingOpen(
+      true
+    );
+
+    setResult(null);
+
+    setPreviewScore(
+      90
+    );
+
+    setViewMode(
+      "dashboard"
+    );
+
+    setSyncStatus(
+      "local"
+    );
+
+    loadedUserRef.current =
+      null;
+  }
+
+  /*
+   * 온보딩
+   */
+  function toggleOnboardingSubject(
+    name: string
+  ) {
+    setOnboardingSubjects(
+      (prev) => {
+        if (
+          prev.includes(name)
+        ) {
+          return prev.filter(
+            (subject) =>
+              subject !==
+              name
+          );
+        }
+
+        return [
+          ...prev,
+          name,
+        ];
+      }
+    );
+  }
+
+  function addCustomOnboardingSubject() {
+    const name =
+      onboardingCustomSubject.trim();
+
+    if (!name) {
+      return;
+    }
+
+    if (
+      onboardingSubjects.includes(
+        name
+      )
+    ) {
+      setOnboardingCustomSubject(
+        ""
+      );
+
+      return;
+    }
+
+    setOnboardingSubjects(
+      (prev) => [
+        ...prev,
+        name,
+      ]
+    );
+
+    setOnboardingCustomSubject(
+      ""
+    );
+  }
+
+  function getOnboardingSemesterName() {
+    if (
+      onboardingSemesterChoice ===
+      CUSTOM_VALUE
+    ) {
+      return onboardingCustomSemester.trim();
+    }
+
+    return onboardingSemesterChoice;
+  }
+
+  function nextOnboardingStep() {
+    if (
+      onboardingStep === 1 &&
+      !getOnboardingSemesterName()
+    ) {
+      alert(
+        "학기 이름을 입력해주세요."
+      );
+
+      return;
+    }
+
+    if (
+      onboardingStep === 2 &&
+      onboardingSubjects.length === 0
+    ) {
+      alert(
+        "최소 한 개의 과목을 선택해주세요."
+      );
+
+      return;
+    }
+
+    setOnboardingStep(
+      (prev) =>
+        Math.min(
+          prev + 1,
+          3
+        )
+    );
+  }
+
+  function finishOnboarding() {
+    const semesterName =
+      getOnboardingSemesterName();
+
+    if (!semesterName) {
+      alert(
+        "학기 이름을 입력해주세요."
+      );
+
+      return;
+    }
+
+    const uniqueSubjects =
+      Array.from(
+        new Set(
+          onboardingSubjects
+            .map(
+              (name) =>
+                name.trim()
+            )
+            .filter(Boolean)
+        )
+      );
+
+    if (
+      uniqueSubjects.length === 0
+    ) {
+      alert(
+        "최소 한 개의 과목을 선택해주세요."
+      );
+
+      return;
+    }
+
+    if (
+      onboardingMode ===
+      "first"
+    ) {
+      const newSubjects =
+        uniqueSubjects.map(
+          createSubject
+        );
+
+      const semester: Semester =
+        {
+          id: createId(),
+          name:
+            semesterName,
+          subjects:
+            newSubjects,
+        };
+
+      setSemesters([
+        semester,
+      ]);
+
+      setCurrentSemesterId(
+        semester.id
+      );
+
+      setCurrentSubjectId(
+        newSubjects[0].id
+      );
+
+      setSemesterCopySourceId(
+        semester.id
+      );
+    } else {
+      const existingByName =
+        new Map(
+          currentSemester.subjects.map(
+            (subject) => [
+              subject.name,
+              subject,
+            ]
+          )
+        );
+
+      const removedSubjects =
+        currentSemester.subjects.filter(
+          (subject) =>
+            !uniqueSubjects.includes(
+              subject.name
+            )
+        );
+
+      if (
+        removedSubjects.length >
+        0
+      ) {
+        const confirmed =
+          window.confirm(
+            `${removedSubjects.length}개 기존 과목이 목록에서 제거됩니다. 계속할까요?`
+          );
+
+        if (!confirmed) {
+          return;
+        }
+      }
+
+      const nextSubjects =
+        uniqueSubjects.map(
+          (name) =>
+            existingByName.get(
+              name
+            ) ??
+            createSubject(
+              name
+            )
+        );
+
+      setSemesters(
+        (prev) =>
+          prev.map(
+            (semester) =>
+              semester.id ===
+              currentSemesterId
+                ? {
+                    ...semester,
+                    name:
+                      semesterName,
+                    subjects:
+                      nextSubjects,
+                  }
+                : semester
+          )
+      );
+
+      setCurrentSubjectId(
+        nextSubjects[0].id
+      );
+    }
+
+    setOnboardingCompleted(
+      true
+    );
+
+    setOnboardingOpen(
+      false
+    );
+
+    setOnboardingStep(
+      1
+    );
+
+    setViewMode(
+      "dashboard"
+    );
+
+    setResult(null);
+  }
+
+  function openQuickSetup() {
+    if (
+      SEMESTER_PRESETS.includes(
+        currentSemester.name
+      )
+    ) {
+      setOnboardingSemesterChoice(
+        currentSemester.name
+      );
+
+      setOnboardingCustomSemester(
+        ""
+      );
+    } else {
+      setOnboardingSemesterChoice(
+        CUSTOM_VALUE
+      );
+
+      setOnboardingCustomSemester(
+        currentSemester.name
+      );
+    }
+
+    setOnboardingSubjects(
+      currentSemester.subjects.map(
+        (subject) =>
+          subject.name
+      )
+    );
+
+    setOnboardingCustomSubject(
+      ""
+    );
+
+    setOnboardingMode(
+      "edit"
+    );
+
+    setOnboardingStep(
+      1
+    );
+
+    setOnboardingOpen(
+      true
+    );
+  }
+
+  /*
+   * 기본 수정
+   */
   function updateCurrentSemester(
     patch: Partial<Semester>
   ) {
@@ -1631,7 +2230,7 @@ export default function Home() {
   }
 
   /*
-   * 학기 생성
+   * 학기 관리
    */
   function addSemesterFromSelection() {
     const semesterName =
@@ -1644,6 +2243,7 @@ export default function Home() {
       alert(
         "학기 이름을 입력해주세요."
       );
+
       return;
     }
 
@@ -1657,6 +2257,7 @@ export default function Home() {
       alert(
         "같은 이름의 학기가 이미 있습니다."
       );
+
       return;
     }
 
@@ -1677,6 +2278,7 @@ export default function Home() {
         alert(
           "복사할 학기를 선택해주세요."
         );
+
         return;
       }
 
@@ -1693,8 +2295,9 @@ export default function Home() {
 
       if (!firstSubject) {
         alert(
-          "첫 과목을 입력해주세요."
+          "첫 과목을 선택해주세요."
         );
+
         return;
       }
 
@@ -1708,10 +2311,8 @@ export default function Home() {
     const semester: Semester =
       {
         id: createId(),
-
         name:
           semesterName,
-
         subjects:
           newSubjects,
       };
@@ -1761,6 +2362,7 @@ export default function Home() {
       alert(
         "최소 한 개의 학기는 남아 있어야 합니다."
       );
+
       return;
     }
 
@@ -1838,7 +2440,7 @@ export default function Home() {
   }
 
   /*
-   * 과목 생성
+   * 과목 관리
    */
   function addSubjectFromSelection() {
     const name =
@@ -1851,6 +2453,7 @@ export default function Home() {
       alert(
         "과목 이름을 입력해주세요."
       );
+
       return;
     }
 
@@ -1864,6 +2467,7 @@ export default function Home() {
       alert(
         `${name} 과목이 이미 등록되어 있습니다.`
       );
+
       return;
     }
 
@@ -1907,6 +2511,7 @@ export default function Home() {
       alert(
         "최소 한 개의 과목은 남아 있어야 합니다."
       );
+
       return;
     }
 
@@ -1950,7 +2555,9 @@ export default function Home() {
   function openSubject(
     id: string
   ) {
-    setCurrentSubjectId(id);
+    setCurrentSubjectId(
+      id
+    );
 
     setPreviewScore(
       90
@@ -1966,33 +2573,113 @@ export default function Home() {
   /*
    * 평가 관리
    */
-  function addAssessment() {
-    const newId =
+  function getNextAssessmentId() {
+    if (
       assessments.length === 0
-        ? 1
-        : Math.max(
-            ...assessments.map(
-              (item) =>
-                item.id
-            )
-          ) + 1;
+    ) {
+      return 1;
+    }
+
+    return (
+      Math.max(
+        ...assessments.map(
+          (item) =>
+            item.id
+        )
+      ) + 1
+    );
+  }
+
+  function getUniqueAssessmentName(
+    baseName: string
+  ) {
+    const names =
+      assessments.map(
+        (item) =>
+          item.name
+      );
+
+    if (
+      !names.includes(
+        baseName
+      )
+    ) {
+      return baseName;
+    }
+
+    let index = 2;
+
+    while (
+      names.includes(
+        `${baseName} ${index}`
+      )
+    ) {
+      index += 1;
+    }
+
+    return `${baseName} ${index}`;
+  }
+
+  function addQuickAssessment(
+    type: QuickAssessmentType
+  ) {
+    const config: Record<
+      QuickAssessmentType,
+      {
+        name: string;
+        type: AssessmentType;
+        maxScore: number;
+      }
+    > = {
+      midterm: {
+        name: "중간고사",
+        type: "written",
+        maxScore: 100,
+      },
+
+      final: {
+        name: "기말고사",
+        type: "written",
+        maxScore: 100,
+      },
+
+      performance: {
+        name: "수행평가",
+        type: "performance",
+        maxScore: 100,
+      },
+
+      other: {
+        name: "기타 평가",
+        type: "performance",
+        maxScore: 100,
+      },
+    };
+
+    const selected =
+      config[type];
 
     const assessment: Assessment =
       {
-        id: newId,
+        id:
+          getNextAssessmentId(),
 
         name:
-          `평가 ${
-            assessments.length +
-            1
-          }`,
+          getUniqueAssessmentName(
+            selected.name
+          ),
 
         type:
-          "performance",
+          selected.type,
 
-        score: 0,
-        maxScore: 100,
-        weight: 10,
+        score:
+          null,
+
+        maxScore:
+          selected.maxScore,
+
+        weight:
+          10,
       };
 
     updateAssessments(
@@ -2001,6 +2688,64 @@ export default function Home() {
         assessment,
       ]
     );
+  }
+
+  function addAssessment() {
+    addQuickAssessment(
+      "other"
+    );
+  }
+
+  function applyAssessmentPreset() {
+    const hasEnteredScores =
+      assessments.some(
+        (item) =>
+          item.score !== null
+      );
+
+    if (
+      hasEnteredScores
+    ) {
+      const confirmed =
+        window.confirm(
+          "프리셋을 적용하면 현재 평가 구성과 입력된 점수가 초기화됩니다. 계속할까요?"
+        );
+
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    const preset =
+      createAssessmentsFromPreset(
+        assessmentPresetChoice
+      );
+
+    updateCurrentSubject({
+      assessments:
+        preset.assessments,
+
+      targetAssessmentId:
+        preset.targetAssessmentId,
+    });
+
+    const target =
+      preset.assessments.find(
+        (item) =>
+          item.id ===
+          preset.targetAssessmentId
+      );
+
+    if (target) {
+      setPreviewScore(
+        Math.min(
+          target.maxScore,
+          90
+        )
+      );
+    }
+
+    setResult(null);
   }
 
   function removeAssessment(
@@ -2012,6 +2757,7 @@ export default function Home() {
       alert(
         "평가 항목은 최소 2개가 필요합니다."
       );
+
       return;
     }
 
@@ -2034,15 +2780,13 @@ export default function Home() {
         ].id;
     }
 
-    updateCurrentSubject(
-      {
-        assessments:
-          remaining,
+    updateCurrentSubject({
+      assessments:
+        remaining,
 
-        targetAssessmentId:
-          nextTarget,
-      }
-    );
+      targetAssessmentId:
+        nextTarget,
+    });
   }
 
   function selectTargetAssessment(
@@ -2054,12 +2798,10 @@ export default function Home() {
           item.id === id
       );
 
-    updateCurrentSubject(
-      {
-        targetAssessmentId:
-          id,
-      }
-    );
+    updateCurrentSubject({
+      targetAssessmentId:
+        id,
+    });
 
     if (selected) {
       setPreviewScore(
@@ -2071,6 +2813,9 @@ export default function Home() {
     }
   }
 
+  /*
+   * 계산
+   */
   function validateInputs() {
     if (
       Math.abs(
@@ -2110,14 +2855,22 @@ export default function Home() {
 
       if (
         item.id !==
-          targetAssessmentId &&
-        (
+        targetAssessmentId
+      ) {
+        if (
+          item.score ===
+          null
+        ) {
+          return `${item.name}의 받은 점수를 입력해주세요.`;
+        }
+
+        if (
           item.score < 0 ||
           item.score >
             item.maxScore
-        )
-      ) {
-        return `${item.name}의 점수를 확인해주세요.`;
+        ) {
+          return `${item.name}의 점수를 확인해주세요.`;
+        }
       }
     }
 
@@ -2132,13 +2885,17 @@ export default function Home() {
           targetAssessmentId
       )
       .reduce(
-        (sum, item) =>
-          sum +
-          (
-            item.score /
-            item.maxScore
-          ) *
-            item.weight,
+        (sum, item) => {
+          const score =
+            item.score ?? 0;
+
+          return (
+            sum +
+            (score /
+              item.maxScore) *
+              item.weight
+          );
+        },
         0
       );
   }
@@ -2148,12 +2905,10 @@ export default function Home() {
       validateInputs();
 
     if (error) {
-      setResult(
-        {
-          type: "error",
-          message: error,
-        }
-      );
+      setResult({
+        type: "error",
+        message: error,
+      });
 
       return;
     }
@@ -2166,23 +2921,17 @@ export default function Home() {
       getCompletedContribution();
 
     const requiredScore =
-      (
-        (
-          targetFinalScore -
-          completed
-        ) /
-        targetAssessment.weight
-      ) *
+      ((targetFinalScore -
+        completed) /
+        targetAssessment.weight) *
       targetAssessment.maxScore;
 
     if (
       requiredScore <= 0
     ) {
-      setResult(
-        {
-          type: "already",
-        }
-      );
+      setResult({
+        type: "already",
+      });
 
       setPreviewScore(
         0
@@ -2195,14 +2944,12 @@ export default function Home() {
       requiredScore >
       targetAssessment.maxScore
     ) {
-      setResult(
-        {
-          type:
-            "impossible",
+      setResult({
+        type:
+          "impossible",
 
-          requiredScore,
-        }
-      );
+        requiredScore,
+      });
 
       setPreviewScore(
         targetAssessment.maxScore
@@ -2211,19 +2958,16 @@ export default function Home() {
       return;
     }
 
-    setResult(
-      {
-        type: "normal",
-        requiredScore,
-      }
-    );
+    setResult({
+      type: "normal",
+      requiredScore,
+    });
 
     setPreviewScore(
       Math.min(
         Math.ceil(
           requiredScore
         ),
-
         targetAssessment.maxScore
       )
     );
@@ -2238,10 +2982,8 @@ export default function Home() {
 
     return (
       getCompletedContribution() +
-      (
-        rawScore /
-        targetAssessment.maxScore
-      ) *
+      (rawScore /
+        targetAssessment.maxScore) *
         targetAssessment.weight
     );
   }
@@ -2257,7 +2999,6 @@ export default function Home() {
             previewScore,
             0
           ),
-
           targetAssessment.maxScore
         )
       : 0;
@@ -2282,10 +3023,8 @@ export default function Home() {
     targetFinalScore > 0
       ? Math.min(
           Math.max(
-            (
-              projectedFinalScore /
-              targetFinalScore
-            ) *
+            (projectedFinalScore /
+              targetFinalScore) *
               100,
             0
           ),
@@ -2313,6 +3052,9 @@ export default function Home() {
         )
       : [];
 
+  /*
+   * Loading
+   */
   if (
     !hydrated ||
     !authReady ||
@@ -2328,13 +3070,108 @@ export default function Home() {
     );
   }
 
+  if (
+    user &&
+    syncStatus ===
+      "syncing" &&
+    !cloudReady
+  ) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-50">
+        <div className="text-center">
+          <p className="text-lg font-black text-blue-600">
+            GradeGoal
+          </p>
+
+          <p className="mt-3 text-sm text-slate-500">
+            클라우드 데이터를 불러오는 중...
+          </p>
+        </div>
+      </main>
+    );
+  }
+
+  /*
+   * Onboarding
+   */
+  if (
+    onboardingOpen ||
+    !onboardingCompleted
+  ) {
+    return (
+      <OnboardingScreen
+        step={
+          onboardingStep
+        }
+        mode={
+          onboardingMode
+        }
+        semesterChoice={
+          onboardingSemesterChoice
+        }
+        setSemesterChoice={
+          setOnboardingSemesterChoice
+        }
+        customSemester={
+          onboardingCustomSemester
+        }
+        setCustomSemester={
+          setOnboardingCustomSemester
+        }
+        subjects={
+          onboardingSubjects
+        }
+        toggleSubject={
+          toggleOnboardingSubject
+        }
+        customSubject={
+          onboardingCustomSubject
+        }
+        setCustomSubject={
+          setOnboardingCustomSubject
+        }
+        addCustomSubject={
+          addCustomOnboardingSubject
+        }
+        onBack={() =>
+          setOnboardingStep(
+            (prev) =>
+              Math.max(
+                prev - 1,
+                1
+              )
+          )
+        }
+        onNext={
+          nextOnboardingStep
+        }
+        onFinish={
+          finishOnboarding
+        }
+        onCancel={() => {
+          if (
+            onboardingMode ===
+            "edit"
+          ) {
+            setOnboardingOpen(
+              false
+            );
+
+            setOnboardingStep(
+              1
+            );
+          }
+        }}
+      />
+    );
+  }
+
   return (
     <main className="min-h-screen bg-slate-50">
+      {/* 상단 */}
 
-      {/* 상단바 */}
       <nav className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3">
-
           <button
             onClick={() =>
               setViewMode(
@@ -2347,9 +3184,7 @@ export default function Home() {
           </button>
 
           <div className="flex items-center gap-2">
-
             <div className="hidden rounded-xl bg-slate-100 p-1 sm:flex">
-
               <button
                 onClick={() =>
                   setViewMode(
@@ -2381,12 +3216,10 @@ export default function Home() {
               >
                 과목 편집
               </button>
-
             </div>
 
             {user ? (
               <div className="flex items-center gap-2">
-
                 <div className="hidden text-right md:block">
                   <p className="max-w-52 truncate text-xs font-semibold text-slate-700">
                     {user.email}
@@ -2416,7 +3249,6 @@ export default function Home() {
                 >
                   로그아웃
                 </button>
-
               </div>
             ) : (
               <button
@@ -2434,21 +3266,18 @@ export default function Home() {
                 로그인
               </button>
             )}
-
           </div>
         </div>
       </nav>
 
-      {/* 로그인 / 회원가입 */}
+      {/* Auth */}
+
       {!user &&
         showAuth && (
           <div className="border-b border-blue-100 bg-blue-50">
             <div className="mx-auto max-w-md px-4 py-7">
-
               <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-
                 <div className="flex rounded-xl bg-slate-100 p-1">
-
                   <button
                     onClick={() => {
                       setAuthMode(
@@ -2488,7 +3317,6 @@ export default function Home() {
                   >
                     회원가입
                   </button>
-
                 </div>
 
                 <form
@@ -2497,7 +3325,6 @@ export default function Home() {
                   }
                   className="mt-5 space-y-4"
                 >
-
                   <label className="block">
                     <span className="mb-2 block text-sm font-semibold text-slate-600">
                       이메일
@@ -2556,31 +3383,19 @@ export default function Home() {
                     {authBusy
                       ? "처리 중..."
                       : authMode ===
-                        "signin"
-                      ? "로그인"
-                      : "회원가입"}
+                          "signin"
+                        ? "로그인"
+                        : "회원가입"}
                   </button>
-
                 </form>
-
-                <p className="mt-4 text-center text-xs leading-5 text-slate-400">
-                  로그인하면 이 기기의
-                  GradeGoal 데이터를
-                  클라우드에 저장하고
-                  다른 기기에서도 사용할
-                  수 있습니다.
-                </p>
-
               </div>
             </div>
           </div>
         )}
 
-      {/* 로그인 상태 안내 */}
       {user && (
         <div className="border-b border-emerald-100 bg-emerald-50">
           <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-2.5">
-
             <p className="text-xs font-semibold text-emerald-700">
               클라우드 저장 사용 중
             </p>
@@ -2592,25 +3407,17 @@ export default function Home() {
                 }
               />
             </p>
-
           </div>
         </div>
       )}
 
       {viewMode ===
       "dashboard" ? (
-
         /*
-         * ======================
-         * 대시보드
-         * ======================
+         * Dashboard
          */
-
         <div className="mx-auto max-w-5xl px-4 py-8">
-
-          {/* 모바일 메뉴 */}
           <div className="mb-5 flex rounded-xl bg-slate-100 p-1 sm:hidden">
-
             <button
               onClick={() =>
                 setViewMode(
@@ -2632,14 +3439,12 @@ export default function Home() {
             >
               과목 편집
             </button>
-
           </div>
 
           {/* 학기 */}
+
           <section className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-
-            <div className="flex items-center justify-between gap-4">
-
+            <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <p className="text-sm font-bold text-blue-600">
                   ACADEMIC TERM
@@ -2650,26 +3455,35 @@ export default function Home() {
                 </h2>
               </div>
 
-              <button
-                onClick={() => {
-                  setShowSemesterAdder(
-                    !showSemesterAdder
-                  );
+              <div className="flex gap-2">
+                <button
+                  onClick={
+                    openQuickSetup
+                  }
+                  className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2.5 text-sm font-bold text-blue-700"
+                >
+                  빠른 설정
+                </button>
 
-                  setSemesterCopySourceId(
-                    currentSemesterId
-                  );
-                }}
-                className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white"
-              >
-                + 학기 추가
-              </button>
+                <button
+                  onClick={() => {
+                    setShowSemesterAdder(
+                      !showSemesterAdder
+                    );
 
+                    setSemesterCopySourceId(
+                      currentSemesterId
+                    );
+                  }}
+                  className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white"
+                >
+                  + 학기 추가
+                </button>
+              </div>
             </div>
 
             {showSemesterAdder && (
               <div className="mt-5 rounded-3xl border border-blue-100 bg-blue-50/50 p-5">
-
                 <h3 className="font-black">
                   새 학기 만들기
                 </h3>
@@ -2690,7 +3504,6 @@ export default function Home() {
                     }
                     className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold"
                   >
-
                     {SEMESTER_PRESETS.map(
                       (semester) => (
                         <option
@@ -2713,7 +3526,6 @@ export default function Home() {
                     >
                       직접 입력
                     </option>
-
                   </select>
                 </label>
 
@@ -2734,13 +3546,11 @@ export default function Home() {
                 )}
 
                 <div className="mt-6">
-
                   <span className="text-sm font-semibold text-slate-600">
                     시작 방법
                   </span>
 
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
-
                     <button
                       onClick={() =>
                         setSemesterCreateMode(
@@ -2759,8 +3569,7 @@ export default function Home() {
                       </p>
 
                       <p className="mt-1 text-xs text-slate-500">
-                        첫 과목부터 새로
-                        설정합니다.
+                        첫 과목부터 새로 설정합니다.
                       </p>
                     </button>
 
@@ -2782,18 +3591,15 @@ export default function Home() {
                       </p>
 
                       <p className="mt-1 text-xs text-slate-500">
-                        과목과 평가 구조를
-                        복사합니다.
+                        과목과 평가 구조를 복사합니다.
                       </p>
                     </button>
-
                   </div>
                 </div>
 
                 {semesterCreateMode ===
                   "new" && (
                   <div className="mt-5">
-
                     <p className="mb-2 text-sm font-semibold text-slate-600">
                       첫 과목
                     </p>
@@ -2822,14 +3628,12 @@ export default function Home() {
                         className="mt-3 w-full rounded-xl border border-slate-200 px-4 py-3"
                       />
                     )}
-
                   </div>
                 )}
 
                 {semesterCreateMode ===
                   "copy" && (
                   <div className="mt-5">
-
                     <p className="mb-2 text-sm font-semibold text-slate-600">
                       복사할 학기
                     </p>
@@ -2845,7 +3649,6 @@ export default function Home() {
                       }
                       className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold"
                     >
-
                       {semesters.map(
                         (semester) => (
                           <option
@@ -2869,20 +3672,11 @@ export default function Home() {
                           </option>
                         )
                       )}
-
                     </select>
-
-                    <p className="mt-3 rounded-xl bg-white p-3 text-xs leading-5 text-slate-500 ring-1 ring-slate-200">
-                      과목·평가 구조·목표점수는
-                      복사되고 실제 받은 점수는
-                      0점으로 초기화됩니다.
-                    </p>
-
                   </div>
                 )}
 
                 <div className="mt-5 flex gap-2">
-
                   <button
                     onClick={
                       addSemesterFromSelection
@@ -2902,14 +3696,11 @@ export default function Home() {
                   >
                     취소
                   </button>
-
                 </div>
-
               </div>
             )}
 
             <div className="mt-5 flex gap-2 overflow-x-auto pb-2">
-
               {semesters.map(
                 (semester) => (
                   <button
@@ -2934,11 +3725,9 @@ export default function Home() {
                   </button>
                 )
               )}
-
             </div>
 
             <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
-
               <input
                 value={
                   currentSemester.name
@@ -2962,13 +3751,10 @@ export default function Home() {
               >
                 학기 삭제
               </button>
-
             </div>
-
           </section>
 
           <header className="mb-7 mt-8">
-
             <p className="text-sm font-bold text-blue-600">
               MY GRADE DASHBOARD
             </p>
@@ -2979,10 +3765,12 @@ export default function Home() {
               }
             </h1>
 
+            <p className="mt-2 text-sm text-slate-500">
+              과목별 목표와 필요한 점수를 확인합니다.
+            </p>
           </header>
 
           <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-
             <SummaryCard
               label="전체 과목"
               value={`${subjects.length}`}
@@ -2990,7 +3778,7 @@ export default function Home() {
             />
 
             <SummaryCard
-              label="설정 완료"
+              label="계산 가능"
               value={`${configuredCount}`}
               suffix="개"
             />
@@ -3006,15 +3794,12 @@ export default function Home() {
               value={`${warningCount}`}
               suffix="개"
               warning={
-                warningCount >
-                0
+                warningCount > 0
               }
             />
-
           </section>
 
           <section className="mt-4 rounded-3xl bg-blue-600 p-6 text-white">
-
             <p className="text-sm text-blue-100">
               평균 목표점수
             </p>
@@ -3028,22 +3813,19 @@ export default function Home() {
                 점
               </span>
             </p>
-
           </section>
 
-          {/* 과목 목록 */}
+          {/* 과목 */}
+
           <section className="mt-8">
-
             <div className="mb-4 flex items-center justify-between gap-3">
-
               <div>
                 <h2 className="text-xl font-black">
                   내 과목
                 </h2>
 
                 <p className="mt-1 text-sm text-slate-500">
-                  과목별 목표를
-                  관리합니다.
+                  과목별 목표를 관리합니다.
                 </p>
               </div>
 
@@ -3057,24 +3839,24 @@ export default function Home() {
               >
                 + 과목 추가
               </button>
-
             </div>
 
             {showSubjectAdder && (
               <div className="mb-5 rounded-3xl bg-blue-50 p-5 ring-1 ring-blue-100">
-
                 <p className="font-bold">
                   새 과목
                 </p>
 
-                <SubjectPresetSelect
-                  value={
-                    subjectChoice
-                  }
-                  onChange={
-                    setSubjectChoice
-                  }
-                />
+                <div className="mt-3">
+                  <SubjectPresetSelect
+                    value={
+                      subjectChoice
+                    }
+                    onChange={
+                      setSubjectChoice
+                    }
+                  />
+                </div>
 
                 {subjectChoice ===
                   CUSTOM_VALUE && (
@@ -3093,7 +3875,6 @@ export default function Home() {
                 )}
 
                 <div className="mt-4 flex gap-2">
-
                   <button
                     onClick={
                       addSubjectFromSelection
@@ -3113,14 +3894,11 @@ export default function Home() {
                   >
                     취소
                   </button>
-
                 </div>
-
               </div>
             )}
 
             <div className="grid gap-4 md:grid-cols-2">
-
               {analyses.map(
                 ({
                   subject,
@@ -3144,41 +3922,32 @@ export default function Home() {
                   />
                 )
               )}
-
             </div>
-
           </section>
 
           <footer className="py-10 text-center text-xs text-slate-400">
             {user
               ? "클라우드 자동 저장 활성화"
-              : "로그인 전에는 이 브라우저에만 저장됩니다."}
+              : "로그인 전에는 현재 브라우저에 저장됩니다."}
           </footer>
-
         </div>
       ) : (
-
         /*
-         * ======================
-         * 과목 편집
-         * ======================
+         * Editor
          */
-
         <div className="mx-auto max-w-3xl px-4 py-8">
-
           <button
             onClick={() =>
               setViewMode(
                 "dashboard"
               )
             }
-            className="mb-5 text-sm font-semibold text-slate-500"
+            className="mb-5 text-sm font-semibold text-slate-500 hover:text-blue-600"
           >
             ← 대시보드로
           </button>
 
           <header className="mb-7">
-
             <p className="text-sm font-bold text-blue-600">
               {
                 currentSemester.name
@@ -3190,14 +3959,12 @@ export default function Home() {
                 currentSubject.name
               }
             </h1>
-
           </header>
 
           {/* 과목 선택 */}
+
           <section className="mb-6 rounded-3xl bg-white p-5 ring-1 ring-slate-200">
-
-            <div className="flex gap-2 overflow-x-auto">
-
+            <div className="flex gap-2 overflow-x-auto pb-2">
               {subjects.map(
                 (subject) => (
                   <button
@@ -3230,11 +3997,9 @@ export default function Home() {
                   </button>
                 )
               )}
-
             </div>
 
             <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
-
               <input
                 value={
                   currentSubject.name
@@ -3258,16 +4023,13 @@ export default function Home() {
               >
                 과목 삭제
               </button>
-
             </div>
-
           </section>
 
           {/* 목표 */}
+
           <section className="mb-6 rounded-3xl bg-white p-6 ring-1 ring-slate-200">
-
             <div className="flex justify-between gap-5">
-
               <div>
                 <p className="text-sm font-bold text-blue-600">
                   STEP 1
@@ -3279,7 +4041,6 @@ export default function Home() {
               </div>
 
               <div className="w-32">
-
                 <NumberInput
                   value={
                     targetFinalScore
@@ -3294,21 +4055,131 @@ export default function Home() {
                   }
                   suffix="점"
                 />
-
               </div>
-
             </div>
-
           </section>
 
-          {/* 평가 */}
+          {/* 평가 빠른 설정 */}
+
+          <section className="mb-6 rounded-3xl border border-blue-100 bg-blue-50/60 p-6">
+            <p className="text-sm font-bold text-blue-600">
+              QUICK SETUP
+            </p>
+
+            <h2 className="mt-1 text-xl font-black text-slate-900">
+              평가 구성 빠른 설정
+            </h2>
+
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              학교의 평가 구조와 가장 비슷한 형태를 선택한 뒤
+              세부 비율을 직접 수정할 수 있습니다.
+            </p>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-[1fr_auto]">
+              <select
+                value={
+                  assessmentPresetChoice
+                }
+                onChange={(e) =>
+                  setAssessmentPresetChoice(
+                    e.target
+                      .value as AssessmentPresetId
+                  )
+                }
+                className="rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-800"
+              >
+                {ASSESSMENT_PRESETS.map(
+                  (preset) => (
+                    <option
+                      key={
+                        preset.id
+                      }
+                      value={
+                        preset.id
+                      }
+                    >
+                      {preset.name} ·{" "}
+                      {
+                        preset.description
+                      }
+                    </option>
+                  )
+                )}
+              </select>
+
+              <button
+                onClick={
+                  applyAssessmentPreset
+                }
+                className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white"
+              >
+                이 구성 적용
+              </button>
+            </div>
+
+            <div className="mt-6 border-t border-blue-100 pt-5">
+              <p className="text-sm font-bold text-slate-700">
+                평가 빠르게 추가
+              </p>
+
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <QuickAddButton
+                  label="+ 중간고사"
+                  onClick={() =>
+                    addQuickAssessment(
+                      "midterm"
+                    )
+                  }
+                />
+
+                <QuickAddButton
+                  label="+ 기말고사"
+                  onClick={() =>
+                    addQuickAssessment(
+                      "final"
+                    )
+                  }
+                />
+
+                <QuickAddButton
+                  label="+ 수행평가"
+                  onClick={() =>
+                    addQuickAssessment(
+                      "performance"
+                    )
+                  }
+                />
+
+                <QuickAddButton
+                  label="+ 기타 평가"
+                  onClick={() =>
+                    addQuickAssessment(
+                      "other"
+                    )
+                  }
+                />
+              </div>
+
+              <p className="mt-3 text-xs leading-5 text-slate-500">
+                새 평가를 추가하면 기본 반영비율은 10%로 설정됩니다.
+                아래에서 실제 학교 반영비율에 맞게 수정하세요.
+              </p>
+            </div>
+          </section>
+
+          {/* 평가 상세 */}
+
           <section className="rounded-3xl bg-white p-6 ring-1 ring-slate-200">
-
             <div className="mb-6 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-bold text-blue-600">
+                  STEP 2
+                </p>
 
-              <h2 className="text-xl font-black">
-                평가 구성
-              </h2>
+                <h2 className="mt-1 text-xl font-black">
+                  평가 상세 설정
+                </h2>
+              </div>
 
               <button
                 onClick={
@@ -3318,11 +4189,9 @@ export default function Home() {
               >
                 + 평가 추가
               </button>
-
             </div>
 
             <div className="space-y-4">
-
               {assessments.map(
                 (item) => {
                   const isTarget =
@@ -3340,11 +4209,8 @@ export default function Home() {
                           : "border-slate-200 bg-slate-50"
                       }`}
                     >
-
                       <div className="mb-4 flex justify-between gap-2">
-
                         <label className="flex items-center gap-2">
-
                           <input
                             type="radio"
                             name="target-assessment"
@@ -3364,7 +4230,6 @@ export default function Home() {
                               ? "목표 계산 대상"
                               : "계산 대상으로 선택"}
                           </span>
-
                         </label>
 
                         <button
@@ -3377,11 +4242,9 @@ export default function Home() {
                         >
                           삭제
                         </button>
-
                       </div>
 
                       <div className="grid gap-3 sm:grid-cols-2">
-
                         <TextInput
                           label="평가 이름"
                           value={
@@ -3399,7 +4262,6 @@ export default function Home() {
                         />
 
                         <label>
-
                           <span className="mb-2 block text-sm text-slate-600">
                             평가 종류
                           </span>
@@ -3428,25 +4290,21 @@ export default function Home() {
                               수행평가
                             </option>
                           </select>
-
                         </label>
-
                       </div>
 
                       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-
                         <div>
-
                           <span className="mb-2 block text-sm text-slate-600">
                             받은 점수
                           </span>
 
                           {isTarget ? (
-                            <div className="rounded-xl bg-blue-100 px-3 py-3 text-sm font-bold text-blue-700">
+                            <div className="flex min-h-[50px] items-center rounded-xl bg-blue-100 px-3 py-3 text-sm font-bold text-blue-700">
                               자동 계산
                             </div>
                           ) : (
-                            <NumberInput
+                            <NullableNumberInput
                               value={
                                 item.score
                               }
@@ -3462,11 +4320,9 @@ export default function Home() {
                               suffix="점"
                             />
                           )}
-
                         </div>
 
                         <div>
-
                           <span className="mb-2 block text-sm text-slate-600">
                             만점
                           </span>
@@ -3486,11 +4342,9 @@ export default function Home() {
                             }
                             suffix="점"
                           />
-
                         </div>
 
                         <div className="col-span-2 sm:col-span-1">
-
                           <span className="mb-2 block text-sm text-slate-600">
                             반영비율
                           </span>
@@ -3510,37 +4364,40 @@ export default function Home() {
                             }
                             suffix="%"
                           />
-
                         </div>
-
                       </div>
-
                     </div>
                   );
                 }
               )}
-
             </div>
 
             <div
-              className={`mt-5 flex justify-between rounded-2xl p-4 ${
+              className={`mt-5 flex items-center justify-between rounded-2xl p-4 ${
                 Math.abs(
-                  totalWeight -
-                    100
+                  totalWeight - 100
                 ) <= 0.01
                   ? "bg-emerald-50"
                   : "bg-amber-50"
               }`}
             >
+              <div>
+                <p className="font-semibold">
+                  전체 반영비율
+                </p>
 
-              <span>
-                전체 반영비율
-              </span>
+                {Math.abs(
+                  totalWeight - 100
+                ) > 0.01 && (
+                  <p className="mt-1 text-xs text-amber-700">
+                    계산하려면 합계를 100%로 맞춰주세요.
+                  </p>
+                )}
+              </div>
 
-              <strong>
+              <strong className="text-lg">
                 {totalWeight}%
               </strong>
-
             </div>
 
             <button
@@ -3551,18 +4408,16 @@ export default function Home() {
             >
               필요한 점수 계산
             </button>
-
           </section>
 
-          {/* 계산 결과 */}
+          {/* 결과 */}
+
           {result && (
             <section className="mt-6">
-
               {result.type ===
                 "normal" &&
                 targetAssessment && (
                   <div className="rounded-3xl bg-white p-7 text-center ring-1 ring-slate-200">
-
                     <p className="text-sm text-slate-500">
                       {
                         targetAssessment.name
@@ -3584,15 +4439,13 @@ export default function Home() {
                       }
                       점 필요
                     </p>
-
                   </div>
                 )}
 
               {result.type ===
                 "already" && (
                   <div className="rounded-3xl bg-emerald-50 p-7 text-center font-bold text-emerald-700">
-                    이미 목표점수를
-                    확보했습니다.
+                    이미 목표점수를 확보했습니다.
                   </div>
                 )}
 
@@ -3615,14 +4468,13 @@ export default function Home() {
                     }
                   </div>
                 )}
-
             </section>
           )}
 
-          {/* 시뮬레이터 */}
+          {/* 시뮬레이션 */}
+
           {targetAssessment && (
             <section className="mt-6 rounded-3xl bg-white p-6 ring-1 ring-slate-200">
-
               <h2 className="text-xl font-black">
                 {
                   targetAssessment.name
@@ -3631,7 +4483,6 @@ export default function Home() {
               </h2>
 
               <div className="mt-5 flex justify-between">
-
                 <span>
                   예상 점수
                 </span>
@@ -3642,7 +4493,6 @@ export default function Home() {
                   }
                   점
                 </strong>
-
               </div>
 
               <input
@@ -3667,7 +4517,6 @@ export default function Home() {
               {inputsValid && (
                 <>
                   <div className="mt-7 text-center">
-
                     <p className="text-sm text-slate-500">
                       예상 최종점수
                     </p>
@@ -3702,11 +4551,9 @@ export default function Home() {
                         부족
                       </p>
                     )}
-
                   </div>
 
                   <div className="mt-6 h-3 overflow-hidden rounded-full bg-slate-100">
-
                     <div
                       className={`h-full ${
                         targetAchieved
@@ -3718,25 +4565,22 @@ export default function Home() {
                           `${progress}%`,
                       }}
                     />
-
                   </div>
                 </>
               )}
-
             </section>
           )}
 
-          {/* 점수별 비교 */}
+          {/* 점수별 */}
+
           {targetAssessment &&
             inputsValid && (
               <section className="mt-6 rounded-3xl bg-white p-6 ring-1 ring-slate-200">
-
                 <h2 className="text-xl font-black">
                   점수별 결과
                 </h2>
 
                 <div className="mt-4 space-y-3">
-
                   {simulationScores.map(
                     (score) => {
                       const finalScore =
@@ -3744,18 +4588,32 @@ export default function Home() {
                           score
                         );
 
+                      const achieved =
+                        finalScore >=
+                        targetFinalScore;
+
                       return (
                         <div
                           key={
                             score
                           }
-                          className="flex justify-between rounded-xl bg-slate-50 p-3"
+                          className={`flex justify-between rounded-xl p-3 ${
+                            achieved
+                              ? "bg-blue-50"
+                              : "bg-slate-50"
+                          }`}
                         >
                           <span>
                             {score}점
                           </span>
 
-                          <strong>
+                          <strong
+                            className={
+                              achieved
+                                ? "text-blue-700"
+                                : ""
+                            }
+                          >
                             최종{" "}
                             {finalScore.toFixed(
                               1
@@ -3766,23 +4624,457 @@ export default function Home() {
                       );
                     }
                   )}
-
                 </div>
-
               </section>
             )}
 
+          <footer className="py-10 text-center text-xs text-slate-400">
+            {
+              currentSemester.name
+            }{" "}
+            · GradeGoal
+          </footer>
         </div>
       )}
-
     </main>
   );
 }
 
 /*
- * ============================
- * 아래는 재사용 UI 컴포넌트
- * ============================
+ * Onboarding
+ */
+
+function OnboardingScreen({
+  step,
+  mode,
+  semesterChoice,
+  setSemesterChoice,
+  customSemester,
+  setCustomSemester,
+  subjects,
+  toggleSubject,
+  customSubject,
+  setCustomSubject,
+  addCustomSubject,
+  onBack,
+  onNext,
+  onFinish,
+  onCancel,
+}: {
+  step: number;
+
+  mode:
+    OnboardingMode;
+
+  semesterChoice:
+    string;
+
+  setSemesterChoice:
+    (value: string) => void;
+
+  customSemester:
+    string;
+
+  setCustomSemester:
+    (value: string) => void;
+
+  subjects:
+    string[];
+
+  toggleSubject:
+    (name: string) => void;
+
+  customSubject:
+    string;
+
+  setCustomSubject:
+    (value: string) => void;
+
+  addCustomSubject:
+    () => void;
+
+  onBack:
+    () => void;
+
+  onNext:
+    () => void;
+
+  onFinish:
+    () => void;
+
+  onCancel:
+    () => void;
+}) {
+  const semesterName =
+    semesterChoice ===
+    CUSTOM_VALUE
+      ? customSemester
+      : semesterChoice;
+
+  return (
+    <main className="min-h-screen bg-slate-50 px-4 py-10">
+      <div className="mx-auto max-w-2xl">
+        <header className="text-center">
+          <p className="text-xl font-black text-blue-600">
+            GradeGoal
+          </p>
+
+          <h1 className="mt-5 text-3xl font-black tracking-tight text-slate-900">
+            {mode ===
+            "first"
+              ? "성적 관리를 시작해볼까요?"
+              : "학기 빠른 설정"}
+          </h1>
+
+          <p className="mt-3 text-sm leading-6 text-slate-500">
+            처음 한 번만 설정하면 이후에는 입력한 정보를 자동으로
+            저장합니다.
+          </p>
+        </header>
+
+        <div className="mt-8 grid grid-cols-3 gap-2">
+          {[1, 2, 3].map(
+            (number) => (
+              <div
+                key={
+                  number
+                }
+                className={`h-2 rounded-full ${
+                  number <=
+                  step
+                    ? "bg-blue-600"
+                    : "bg-slate-200"
+                }`}
+              />
+            )
+          )}
+        </div>
+
+        <p className="mt-3 text-center text-xs font-semibold text-slate-400">
+          {step} / 3
+        </p>
+
+        <section className="mt-6 rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-200 sm:p-8">
+          {step ===
+            1 && (
+            <>
+              <p className="text-sm font-bold text-blue-600">
+                STEP 1
+              </p>
+
+              <h2 className="mt-2 text-2xl font-black text-slate-900">
+                현재 학기를 선택하세요
+              </h2>
+
+              <p className="mt-2 text-sm text-slate-500">
+                목록에 없다면 직접 입력할 수도 있습니다.
+              </p>
+
+              <select
+                value={
+                  semesterChoice
+                }
+                onChange={(e) =>
+                  setSemesterChoice(
+                    e.target.value
+                  )
+                }
+                className="mt-6 w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 font-bold text-slate-800"
+              >
+                {SEMESTER_PRESETS.map(
+                  (semester) => (
+                    <option
+                      key={
+                        semester
+                      }
+                      value={
+                        semester
+                      }
+                    >
+                      {
+                        semester
+                      }
+                    </option>
+                  )
+                )}
+
+                <option
+                  value={
+                    CUSTOM_VALUE
+                  }
+                >
+                  직접 입력
+                </option>
+              </select>
+
+              {semesterChoice ===
+                CUSTOM_VALUE && (
+                <input
+                  value={
+                    customSemester
+                  }
+                  onChange={(e) =>
+                    setCustomSemester(
+                      e.target.value
+                    )
+                  }
+                  placeholder="예: 2026학년도 2학기"
+                  className="mt-3 w-full rounded-2xl border border-slate-200 px-4 py-4 font-semibold"
+                />
+              )}
+            </>
+          )}
+
+          {step ===
+            2 && (
+            <>
+              <p className="text-sm font-bold text-blue-600">
+                STEP 2
+              </p>
+
+              <h2 className="mt-2 text-2xl font-black text-slate-900">
+                듣고 있는 과목을 선택하세요
+              </h2>
+
+              <p className="mt-2 text-sm text-slate-500">
+                여러 과목을 한 번에 선택할 수 있습니다.
+              </p>
+
+              <div className="mt-6 space-y-6">
+                {SUBJECT_GROUPS.map(
+                  (group) => (
+                    <div
+                      key={
+                        group.label
+                      }
+                    >
+                      <p className="mb-3 text-sm font-black text-slate-700">
+                        {
+                          group.label
+                        }
+                      </p>
+
+                      <div className="flex flex-wrap gap-2">
+                        {group.subjects.map(
+                          (subject) => {
+                            const selected =
+                              subjects.includes(
+                                subject
+                              );
+
+                            return (
+                              <button
+                                type="button"
+                                key={
+                                  subject
+                                }
+                                onClick={() =>
+                                  toggleSubject(
+                                    subject
+                                  )
+                                }
+                                className={`rounded-xl px-3.5 py-2.5 text-sm font-semibold ${
+                                  selected
+                                    ? "bg-blue-600 text-white"
+                                    : "bg-slate-100 text-slate-600"
+                                }`}
+                              >
+                                {selected
+                                  ? "✓ "
+                                  : ""}
+                                {
+                                  subject
+                                }
+                              </button>
+                            );
+                          }
+                        )}
+                      </div>
+                    </div>
+                  )
+                )}
+              </div>
+
+              <div className="mt-7 rounded-2xl bg-slate-50 p-4">
+                <p className="text-sm font-bold text-slate-700">
+                  과목 직접 입력
+                </p>
+
+                <div className="mt-3 flex gap-2">
+                  <input
+                    value={
+                      customSubject
+                    }
+                    onChange={(e) =>
+                      setCustomSubject(
+                        e.target.value
+                      )
+                    }
+                    onKeyDown={(e) => {
+                      if (
+                        e.key ===
+                        "Enter"
+                      ) {
+                        e.preventDefault();
+
+                        addCustomSubject();
+                      }
+                    }}
+                    placeholder="과목 이름"
+                    className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-4 py-3"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={
+                      addCustomSubject
+                    }
+                    className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white"
+                  >
+                    추가
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-5 rounded-2xl bg-blue-50 p-4">
+                <p className="text-sm font-semibold text-blue-700">
+                  선택한 과목{" "}
+                  {
+                    subjects.length
+                  }
+                  개
+                </p>
+
+                {subjects.length >
+                  0 && (
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    {subjects.join(
+                      " · "
+                    )}
+                  </p>
+                )}
+              </div>
+            </>
+          )}
+
+          {step ===
+            3 && (
+            <>
+              <p className="text-sm font-bold text-blue-600">
+                STEP 3
+              </p>
+
+              <h2 className="mt-2 text-2xl font-black text-slate-900">
+                설정을 확인하세요
+              </h2>
+
+              <div className="mt-6 space-y-4">
+                <div className="rounded-2xl bg-slate-50 p-5">
+                  <p className="text-xs font-bold text-slate-400">
+                    학기
+                  </p>
+
+                  <p className="mt-2 text-lg font-black text-slate-900">
+                    {
+                      semesterName
+                    }
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-slate-50 p-5">
+                  <p className="text-xs font-bold text-slate-400">
+                    과목
+                  </p>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {subjects.map(
+                      (subject) => (
+                        <span
+                          key={
+                            subject
+                          }
+                          className="rounded-full bg-white px-3 py-2 text-sm font-bold text-slate-700 ring-1 ring-slate-200"
+                        >
+                          {
+                            subject
+                          }
+                        </span>
+                      )
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl bg-blue-50 p-5 text-sm leading-6 text-blue-800">
+                  각 과목은 기본적으로{" "}
+                  <strong>
+                    중간 30% + 수행 40% + 기말 30%
+                  </strong>
+                  로 시작합니다. 과목 편집에서 다른 평가 구조를
+                  빠르게 선택할 수 있습니다.
+                </div>
+              </div>
+            </>
+          )}
+
+          <div className="mt-8 flex gap-3">
+            {step >
+            1 ? (
+              <button
+                type="button"
+                onClick={
+                  onBack
+                }
+                className="rounded-2xl border border-slate-200 bg-white px-5 py-4 font-bold text-slate-600"
+              >
+                이전
+              </button>
+            ) : mode ===
+              "edit" ? (
+              <button
+                type="button"
+                onClick={
+                  onCancel
+                }
+                className="rounded-2xl border border-slate-200 bg-white px-5 py-4 font-bold text-slate-600"
+              >
+                취소
+              </button>
+            ) : null}
+
+            {step <
+            3 ? (
+              <button
+                type="button"
+                onClick={
+                  onNext
+                }
+                className="flex-1 rounded-2xl bg-blue-600 py-4 font-black text-white"
+              >
+                다음
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={
+                  onFinish
+                }
+                className="flex-1 rounded-2xl bg-blue-600 py-4 font-black text-white"
+              >
+                {mode ===
+                "first"
+                  ? "GradeGoal 시작"
+                  : "설정 저장"}
+              </button>
+            )}
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}
+
+/*
+ * UI Components
  */
 
 function SyncLabel({
@@ -3790,7 +5082,10 @@ function SyncLabel({
 }: {
   status: SyncStatus;
 }) {
-  const labels = {
+  const labels: Record<
+    SyncStatus,
+    string
+  > = {
     local:
       "이 기기에 저장",
 
@@ -3819,13 +5114,15 @@ function SubjectPresetSelect({
   onChange,
 }: {
   value: string;
-  onChange: (
-    value: string
-  ) => void;
+
+  onChange:
+    (value: string) => void;
 }) {
   return (
     <select
-      value={value}
+      value={
+        value
+      }
       onChange={(e) =>
         onChange(
           e.target.value
@@ -3833,7 +5130,6 @@ function SubjectPresetSelect({
       }
       className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold"
     >
-
       {SUBJECT_GROUPS.map(
         (group) => (
           <optgroup
@@ -3854,7 +5150,9 @@ function SubjectPresetSelect({
                     subject
                   }
                 >
-                  {subject}
+                  {
+                    subject
+                  }
                 </option>
               )
             )}
@@ -3869,8 +5167,27 @@ function SubjectPresetSelect({
       >
         직접 입력
       </option>
-
     </select>
+  );
+}
+
+function QuickAddButton({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={
+        onClick
+      }
+      className="rounded-xl border border-blue-200 bg-white px-3 py-3 text-sm font-bold text-blue-700 hover:bg-blue-50"
+    >
+      {label}
+    </button>
   );
 }
 
@@ -3894,9 +5211,7 @@ function SubjectCard({
       }
       className="w-full rounded-3xl bg-white p-5 text-left shadow-sm ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:shadow-md"
     >
-
       <div className="flex items-start justify-between gap-3">
-
         <div>
           <p className="text-lg font-black">
             {
@@ -3918,11 +5233,9 @@ function SubjectCard({
             analysis
           }
         />
-
       </div>
 
       <div className="mt-5 border-t border-slate-100 pt-4">
-
         {analysis.status ===
           "normal" && (
           <>
@@ -3998,13 +5311,11 @@ function SubjectCard({
             </p>
           </>
         )}
-
       </div>
 
       <p className="mt-5 text-sm font-bold text-blue-600">
         과목 편집 →
       </p>
-
     </button>
   );
 }
@@ -4066,14 +5377,20 @@ function SummaryCard({
   suffix,
   warning = false,
 }: {
-  label: string;
-  value: string;
-  suffix: string;
-  warning?: boolean;
+  label:
+    string;
+
+  value:
+    string;
+
+  suffix:
+    string;
+
+  warning?:
+    boolean;
 }) {
   return (
     <div className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
-
       <p className="text-xs text-slate-500">
         {label}
       </p>
@@ -4091,7 +5408,6 @@ function SummaryCard({
           {suffix}
         </span>
       </p>
-
     </div>
   );
 }
@@ -4101,19 +5417,17 @@ function NumberInput({
   onChange,
   suffix,
 }: {
-  value: number;
+  value:
+    number;
 
   onChange:
-    (
-      value: number
-    ) => void;
+    (value: number) => void;
 
   suffix:
     string;
 }) {
   return (
-    <div className="flex rounded-xl border border-slate-200 bg-white px-3">
-
+    <div className="flex rounded-xl border border-slate-200 bg-white px-3 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
       <input
         type="number"
         value={
@@ -4126,13 +5440,65 @@ function NumberInput({
             )
           )
         }
-        className="min-w-0 flex-1 py-3 font-semibold outline-none"
+        className="min-w-0 flex-1 bg-transparent py-3 font-semibold outline-none"
       />
 
       <span className="self-center text-sm text-slate-400">
         {suffix}
       </span>
+    </div>
+  );
+}
 
+function NullableNumberInput({
+  value,
+  onChange,
+  suffix,
+}: {
+  value:
+    number | null;
+
+  onChange:
+    (
+      value:
+        number | null
+    ) => void;
+
+  suffix:
+    string;
+}) {
+  return (
+    <div className="flex rounded-xl border border-slate-200 bg-white px-3 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
+      <input
+        type="number"
+        value={
+          value ?? ""
+        }
+        placeholder="미입력"
+        onChange={(e) => {
+          const text =
+            e.target.value;
+
+          if (
+            text === ""
+          ) {
+            onChange(
+              null
+            );
+
+            return;
+          }
+
+          onChange(
+            Number(text)
+          );
+        }}
+        className="min-w-0 flex-1 bg-transparent py-3 font-semibold outline-none"
+      />
+
+      <span className="self-center text-sm text-slate-400">
+        {suffix}
+      </span>
     </div>
   );
 }
@@ -4149,13 +5515,10 @@ function TextInput({
     string;
 
   onChange:
-    (
-      value: string
-    ) => void;
+    (value: string) => void;
 }) {
   return (
     <label>
-
       <span className="mb-2 block text-sm text-slate-600">
         {label}
       </span>
@@ -4169,9 +5532,8 @@ function TextInput({
             e.target.value
           )
         }
-        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 font-semibold"
+        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
       />
-
     </label>
   );
 }
