@@ -2,6 +2,7 @@
 
 import {
   FormEvent,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -934,187 +935,200 @@ export default function Home() {
    * 로컬 데이터 로드
    */
   useEffect(() => {
-    try {
-      const keys = [
-        STORAGE_KEY,
-        ...OLD_STORAGE_KEYS,
-      ];
+    const timer =
+      window.setTimeout(
+        () => {
 
-      for (
-        const key of keys
-      ) {
-        const saved =
-          localStorage.getItem(
-            key
+        try {
+          const keys = [
+            STORAGE_KEY,
+            ...OLD_STORAGE_KEYS,
+          ];
+
+          for (
+            const key of keys
+          ) {
+            const saved =
+              localStorage.getItem(
+                key
+              );
+
+            if (!saved) {
+              continue;
+            }
+
+            const parsed =
+              JSON.parse(saved);
+
+            if (
+              Array.isArray(
+                parsed.semesters
+              ) &&
+              parsed.semesters.length >
+                0
+            ) {
+              const normalized =
+                normalizePayload({
+                  version:
+                    parsed.version ??
+                    1,
+
+                  semesters:
+                    parsed.semesters,
+
+                  currentSemesterId:
+                    parsed.currentSemesterId,
+
+                  currentSubjectId:
+                    parsed.currentSubjectId,
+
+                  onboardingCompleted:
+                    parsed.onboardingCompleted,
+                });
+
+              if (normalized) {
+                setSemesters(
+                  normalized.semesters
+                );
+
+                setCurrentSemesterId(
+                  normalized.currentSemesterId
+                );
+
+                setCurrentSubjectId(
+                  normalized.currentSubjectId
+                );
+
+                setSemesterCopySourceId(
+                  normalized.currentSemesterId
+                );
+
+                setOnboardingCompleted(
+                  normalized.onboardingCompleted
+                );
+
+                setHydrated(true);
+
+                return;
+              }
+            }
+          }
+
+          const oldV1 =
+            localStorage.getItem(
+              OLD_V1
+            );
+
+          if (oldV1) {
+            const old =
+              JSON.parse(oldV1);
+
+            if (
+              Array.isArray(
+                old.subjects
+              ) &&
+              old.subjects.length > 0
+            ) {
+              const semester: Semester =
+                {
+                  id: createId(),
+
+                  name:
+                    old.semesterName ||
+                    "1학년 1학기",
+
+                  subjects:
+                    old.subjects.map(
+                      normalizeSubject
+                    ),
+                };
+
+              const subject =
+                semester.subjects.find(
+                  (item) =>
+                    item.id ===
+                    old.currentSubjectId
+                ) ??
+                semester.subjects[0];
+
+              setSemesters([
+                semester,
+              ]);
+
+              setCurrentSemesterId(
+                semester.id
+              );
+
+              setCurrentSubjectId(
+                subject.id
+              );
+
+              setSemesterCopySourceId(
+                semester.id
+              );
+
+              setOnboardingCompleted(
+                true
+              );
+
+              setHydrated(true);
+
+              return;
+            }
+          }
+        } catch (error) {
+          console.error(
+            "로컬 데이터 로드 오류",
+            error
+          );
+        }
+
+        const initial =
+          createSemester(
+            "1학년 1학기",
+            "수학"
           );
 
-        if (!saved) {
-          continue;
-        }
+        setSemesters([
+          initial,
+        ]);
 
-        const parsed =
-          JSON.parse(saved);
-
-        if (
-          Array.isArray(
-            parsed.semesters
-          ) &&
-          parsed.semesters.length >
-            0
-        ) {
-          const normalized =
-            normalizePayload({
-              version:
-                parsed.version ??
-                1,
-
-              semesters:
-                parsed.semesters,
-
-              currentSemesterId:
-                parsed.currentSemesterId,
-
-              currentSubjectId:
-                parsed.currentSubjectId,
-
-              onboardingCompleted:
-                parsed.onboardingCompleted,
-            });
-
-          if (normalized) {
-            setSemesters(
-              normalized.semesters
-            );
-
-            setCurrentSemesterId(
-              normalized.currentSemesterId
-            );
-
-            setCurrentSubjectId(
-              normalized.currentSubjectId
-            );
-
-            setSemesterCopySourceId(
-              normalized.currentSemesterId
-            );
-
-            setOnboardingCompleted(
-              normalized.onboardingCompleted
-            );
-
-            setHydrated(true);
-
-            return;
-          }
-        }
-      }
-
-      const oldV1 =
-        localStorage.getItem(
-          OLD_V1
+        setCurrentSemesterId(
+          initial.id
         );
 
-      if (oldV1) {
-        const old =
-          JSON.parse(oldV1);
+        setCurrentSubjectId(
+          initial.subjects[0].id
+        );
 
-        if (
-          Array.isArray(
-            old.subjects
-          ) &&
-          old.subjects.length > 0
-        ) {
-          const semester: Semester =
-            {
-              id: createId(),
+        setSemesterCopySourceId(
+          initial.id
+        );
 
-              name:
-                old.semesterName ||
-                "1학년 1학기",
+        setOnboardingCompleted(
+          false
+        );
 
-              subjects:
-                old.subjects.map(
-                  normalizeSubject
-                ),
-            };
+        setOnboardingMode(
+          "first"
+        );
 
-          const subject =
-            semester.subjects.find(
-              (item) =>
-                item.id ===
-                old.currentSubjectId
-            ) ??
-            semester.subjects[0];
+        setOnboardingOpen(
+          true
+        );
 
-          setSemesters([
-            semester,
-          ]);
-
-          setCurrentSemesterId(
-            semester.id
-          );
-
-          setCurrentSubjectId(
-            subject.id
-          );
-
-          setSemesterCopySourceId(
-            semester.id
-          );
-
-          setOnboardingCompleted(
-            true
-          );
-
-          setHydrated(true);
-
-          return;
-        }
-      }
-    } catch (error) {
-      console.error(
-        "로컬 데이터 로드 오류",
-        error
-      );
-    }
-
-    const initial =
-      createSemester(
-        "1학년 1학기",
-        "수학"
+        setHydrated(
+          true
+        );
+        },
+        0
       );
 
-    setSemesters([
-      initial,
-    ]);
-
-    setCurrentSemesterId(
-      initial.id
-    );
-
-    setCurrentSubjectId(
-      initial.subjects[0].id
-    );
-
-    setSemesterCopySourceId(
-      initial.id
-    );
-
-    setOnboardingCompleted(
-      false
-    );
-
-    setOnboardingMode(
-      "first"
-    );
-
-    setOnboardingOpen(
-      true
-    );
-
-    setHydrated(
-      true
-    );
+    return () => {
+      window.clearTimeout(
+        timer
+      );
+    };
   }, []);
 
   /*
@@ -1245,81 +1259,34 @@ export default function Home() {
     user?.id ?? null;
 
   /*
-   * 최초 클라우드 동기화
+   * 클라우드 상태 반영 함수
+   *
+   * Effect 자체가 직접 setState를 호출하지 않도록
+   * 상태 변경을 안정된 callback으로 분리합니다.
    */
-  useEffect(() => {
-    if (
-      !hydrated ||
-      !authReady ||
-      !userId
-    ) {
-      return;
-    }
 
-    if (
-      loadedUserRef.current ===
-      userId
-    ) {
-      return;
-    }
+  const beginCloudSync =
+    useCallback(() => {
+      setCloudReady(false);
+      setSyncStatus("syncing");
+    }, []);
 
-    loadedUserRef.current =
-      userId;
+  const failCloudSync =
+    useCallback(() => {
+      setSyncStatus("error");
+      loadedUserRef.current = null;
+    }, []);
 
-    let cancelled =
-      false;
-
-    async function initialCloudSync() {
-      setCloudReady(
-        false
-      );
-
-      setSyncStatus(
-        "syncing"
-      );
-
-      const {
-        data,
-        error,
-      } =
-        await supabase
-          .from(
-            "gradegoal_data"
-          )
-          .select("data")
-          .eq(
-            "user_id",
-            userId
-          )
-          .maybeSingle();
-
-      if (cancelled) {
-        return;
-      }
-
-      if (error) {
-        console.error(
-          error
-        );
-
-        setSyncStatus(
-          "error"
-        );
-
-        loadedUserRef.current =
-          null;
-
-        return;
-      }
-
-      if (
-        data?.data
-      ) {
-        const normalized =
-          normalizePayload(
-            data.data as CloudPayload
-          );
-
+  const finishCloudSync =
+    useCallback(
+      (
+        normalized?:
+          NonNullable<
+            ReturnType<
+              typeof normalizePayload
+            >
+          >
+      ) => {
         if (normalized) {
           setSemesters(
             normalized.semesters
@@ -1352,26 +1319,121 @@ export default function Home() {
               true
             );
           }
+        }
 
-          setCloudReady(
-            true
+        setCloudReady(true);
+        setSyncStatus("synced");
+      },
+      []
+    );
+
+  /*
+   * 최초 클라우드 동기화
+   */
+  useEffect(() => {
+    if (
+      !hydrated ||
+      !authReady ||
+      !userId
+    ) {
+      return;
+    }
+
+    if (
+      loadedUserRef.current ===
+      userId
+    ) {
+      return;
+    }
+
+    loadedUserRef.current =
+      userId;
+
+    let cancelled =
+      false;
+
+    /*
+     * 로딩 상태 변경은 timer callback에서 실행하여
+     * Effect 본문의 동기적 setState를 피합니다.
+     */
+    const statusTimer =
+      window.setTimeout(
+        () => {
+          if (
+            cancelled
+          ) {
+            return;
+          }
+
+          beginCloudSync();
+        },
+        0
+      );
+
+    async function syncCloud() {
+      const {
+        data,
+        error,
+      } =
+        await supabase
+          .from(
+            "gradegoal_data"
+          )
+          .select("data")
+          .eq(
+            "user_id",
+            userId
+          )
+          .maybeSingle();
+
+      if (
+        cancelled
+      ) {
+        return;
+      }
+
+      if (error) {
+        console.error(
+          error
+        );
+
+        failCloudSync();
+
+        return;
+      }
+
+      /*
+       * 기존 Cloud 데이터가 있으면
+       * Cloud 데이터를 현재 앱 상태에 적용
+       */
+      if (
+        data?.data
+      ) {
+        const normalized =
+          normalizePayload(
+            data.data as CloudPayload
           );
 
-          setSyncStatus(
-            "synced"
+        if (
+          normalized
+        ) {
+          finishCloudSync(
+            normalized
           );
 
           return;
         }
       }
 
+      /*
+       * Cloud 데이터가 없다면
+       * 현재 로컬 데이터를 최초 업로드
+       */
       const local =
         localSnapshotRef.current;
 
       if (!local) {
-        setSyncStatus(
-          "error"
-        );
+        failCloudSync();
 
         return;
       }
@@ -1398,43 +1460,44 @@ export default function Home() {
             }
           );
 
-      if (cancelled) {
+      if (
+        cancelled
+      ) {
         return;
       }
 
-      if (uploadError) {
+      if (
+        uploadError
+      ) {
         console.error(
           uploadError
         );
 
-        setSyncStatus(
-          "error"
-        );
-
-        loadedUserRef.current =
-          null;
+        failCloudSync();
 
         return;
       }
 
-      setCloudReady(
-        true
-      );
-
-      setSyncStatus(
-        "synced"
-      );
+      finishCloudSync();
     }
 
-    initialCloudSync();
+    void syncCloud();
 
     return () => {
-      cancelled = true;
+      cancelled =
+        true;
+
+      window.clearTimeout(
+        statusTimer
+      );
     };
   }, [
     hydrated,
     authReady,
     userId,
+    beginCloudSync,
+    failCloudSync,
+    finishCloudSync,
   ]);
 
   /*
@@ -1450,13 +1513,17 @@ export default function Home() {
       return;
     }
 
-    setSyncStatus(
-      "saving"
-    );
-
+    /*
+     * 상태 변경도 debounce callback 안에서 실행합니다.
+     * 빠르게 연속 입력할 경우 이전 timer는 취소됩니다.
+     */
     const timer =
       window.setTimeout(
         async () => {
+          setSyncStatus(
+            "saving"
+          );
+
           const payload: CloudPayload =
             {
               version: 3,
@@ -1533,8 +1600,14 @@ export default function Home() {
     semesters[0];
 
   const subjects =
-    currentSemester?.subjects ??
-    [];
+    useMemo(
+      () =>
+        currentSemester?.subjects ??
+        [],
+      [
+        currentSemester,
+      ]
+    );
 
   const currentSubject =
     subjects.find(
